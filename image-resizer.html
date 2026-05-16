@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Photo Resizer — 850×510 / 100 KB</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f0f2f5;
+      color: #1a1a2e;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 16px;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      margin-bottom: 4px;
+    }
+
+    .subtitle {
+      font-size: 0.85rem;
+      color: #666;
+      margin-bottom: 32px;
+    }
+
+    /* Drop zone */
+    #drop-zone {
+      width: 100%;
+      max-width: 680px;
+      border: 2px dashed #a0aec0;
+      border-radius: 12px;
+      background: #fff;
+      padding: 48px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+    }
+
+    #drop-zone.dragover {
+      border-color: #3b82f6;
+      background: #eff6ff;
+    }
+
+    #drop-zone svg { margin-bottom: 12px; opacity: 0.5; }
+
+    #drop-zone p { font-size: 1rem; color: #555; }
+    #drop-zone span { color: #3b82f6; font-weight: 600; }
+
+    #file-input { display: none; }
+
+    /* Output panel */
+    #output { display: none; flex-direction: column; align-items: center; gap: 20px; margin-top: 32px; width: 100%; max-width: 680px; }
+
+    .previews {
+      display: flex;
+      gap: 16px;
+      width: 100%;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .preview-box {
+      flex: 1 1 300px;
+      background: #fff;
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+    }
+
+    .preview-box img {
+      width: 100%;
+      height: 200px;
+      object-fit: cover;
+      display: block;
+    }
+
+    .preview-meta {
+      padding: 10px 14px;
+      font-size: 0.78rem;
+      color: #555;
+    }
+
+    .preview-meta strong { display: block; font-size: 0.85rem; color: #111; margin-bottom: 2px; }
+
+    /* Stats bar */
+    #stats {
+      width: 100%;
+      background: #fff;
+      border-radius: 10px;
+      padding: 14px 20px;
+      display: flex;
+      gap: 24px;
+      flex-wrap: wrap;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+      font-size: 0.85rem;
+    }
+
+    .stat label { color: #888; font-size: 0.75rem; display: block; margin-bottom: 2px; }
+    .stat value { font-weight: 700; font-size: 1rem; }
+    .stat value.ok { color: #16a34a; }
+    .stat value.warn { color: #dc2626; }
+
+    /* Buttons */
+    .actions { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+
+    button {
+      padding: 11px 24px;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+
+    button:hover { opacity: 0.85; }
+
+    #btn-download {
+      background: #3b82f6;
+      color: #fff;
+    }
+
+    #btn-reset {
+      background: #e5e7eb;
+      color: #374151;
+    }
+
+    #loader {
+      display: none;
+      font-size: 0.9rem;
+      color: #555;
+      margin-top: 16px;
+    }
+
+    canvas { display: none; }
+  </style>
+</head>
+<body>
+
+  <h1>Photo Resizer</h1>
+  <p class="subtitle">850 × 510 px &nbsp;·&nbsp; max 100 KB &nbsp;·&nbsp; smart crop</p>
+
+  <div id="drop-zone">
+    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#555" stroke-width="1.5">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+      <polyline points="17 8 12 3 7 8"/>
+      <line x1="12" y1="3" x2="12" y2="15"/>
+    </svg>
+    <p>Drag &amp; drop a photo here, or <span id="browse-link">browse</span></p>
+    <input type="file" id="file-input" accept="image/*" />
+  </div>
+
+  <p id="loader">Processing…</p>
+
+  <div id="output">
+    <div class="previews">
+      <div class="preview-box">
+        <img id="preview-orig" src="" alt="Original" />
+        <div class="preview-meta">
+          <strong>Original</strong>
+          <span id="meta-orig"></span>
+        </div>
+      </div>
+      <div class="preview-box">
+        <img id="preview-out" src="" alt="Output" />
+        <div class="preview-meta">
+          <strong>Output</strong>
+          <span id="meta-out"></span>
+        </div>
+      </div>
+    </div>
+
+    <div id="stats">
+      <div class="stat">
+        <label>Dimensions</label>
+        <value id="stat-size">850 × 510 px</value>
+      </div>
+      <div class="stat">
+        <label>File size</label>
+        <value id="stat-kb"></value>
+      </div>
+      <div class="stat">
+        <label>JPEG quality</label>
+        <value id="stat-quality"></value>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button id="btn-download">Download</button>
+      <button id="btn-reset">Process another photo</button>
+    </div>
+  </div>
+
+  <canvas id="canvas"></canvas>
+
+  <script>
+    const TARGET_W = 850;
+    const TARGET_H = 510;
+    const MAX_BYTES = 100 * 1024; // 100 KB
+
+    const dropZone   = document.getElementById('drop-zone');
+    const fileInput  = document.getElementById('file-input');
+    const browseLink = document.getElementById('browse-link');
+    const loader     = document.getElementById('loader');
+    const output     = document.getElementById('output');
+    const canvas     = document.getElementById('canvas');
+    const ctx        = canvas.getContext('2d');
+
+    // ── Event wiring ─────────────────────────────────────────────────────────
+
+    browseLink.addEventListener('click', () => fileInput.click());
+    dropZone.addEventListener('click', (e) => { if (e.target !== browseLink) fileInput.click(); });
+
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('dragover');
+      const file = e.dataTransfer.files[0];
+      if (file && file.type.startsWith('image/')) processFile(file);
+    });
+
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files[0]) processFile(fileInput.files[0]);
+    });
+
+    document.getElementById('btn-reset').addEventListener('click', reset);
+
+    // ── Core logic ────────────────────────────────────────────────────────────
+
+    function processFile(file) {
+      loader.style.display = 'block';
+      dropZone.style.display = 'none';
+
+      const origUrl = URL.createObjectURL(file);
+      document.getElementById('preview-orig').src = origUrl;
+      document.getElementById('meta-orig').textContent =
+        `${(file.size / 1024).toFixed(1)} KB`;
+
+      const img = new Image();
+      img.onload = () => {
+        document.getElementById('meta-orig').textContent =
+          `${img.naturalWidth} × ${img.naturalHeight} px · ${(file.size / 1024).toFixed(1)} KB`;
+
+        // Smart crop: scale to cover TARGET_W × TARGET_H, center-crop excess
+        const scaleX = TARGET_W / img.naturalWidth;
+        const scaleY = TARGET_H / img.naturalHeight;
+        const scale  = Math.max(scaleX, scaleY);
+
+        const scaledW = img.naturalWidth  * scale;
+        const scaledH = img.naturalHeight * scale;
+        const offsetX = (scaledW - TARGET_W) / 2;
+        const offsetY = (scaledH - TARGET_H) / 2;
+
+        canvas.width  = TARGET_W;
+        canvas.height = TARGET_H;
+        ctx.clearRect(0, 0, TARGET_W, TARGET_H);
+        ctx.drawImage(img, -offsetX, -offsetY, scaledW, scaledH);
+
+        // Binary search for the highest JPEG quality that keeps size ≤ 100 KB
+        const { dataUrl, quality } = compressToTarget(MAX_BYTES);
+        const blob = dataUrlToBlob(dataUrl);
+        const sizeKb = blob.size / 1024;
+
+        document.getElementById('preview-out').src = dataUrl;
+        document.getElementById('meta-out').textContent =
+          `${TARGET_W} × ${TARGET_H} px · ${sizeKb.toFixed(1)} KB`;
+
+        const statKb = document.getElementById('stat-kb');
+        statKb.textContent = `${sizeKb.toFixed(1)} KB`;
+        statKb.className   = sizeKb <= 100 ? 'ok' : 'warn';
+
+        document.getElementById('stat-quality').textContent = `${Math.round(quality * 100)}%`;
+
+        document.getElementById('btn-download').onclick = () => {
+          const a = document.createElement('a');
+          a.href     = dataUrl;
+          a.download = 'photo_850x510.jpg';
+          a.click();
+        };
+
+        loader.style.display = 'none';
+        output.style.display = 'flex';
+      };
+      img.src = origUrl;
+    }
+
+    // Binary search over JPEG quality [0.1 … 1.0] to maximise quality ≤ maxBytes
+    function compressToTarget(maxBytes) {
+      let lo = 0.10, hi = 1.0, bestUrl = null, bestQ = lo;
+
+      for (let i = 0; i < 14; i++) {          // 14 iterations → ~0.006% precision
+        const mid = (lo + hi) / 2;
+        const url = canvas.toDataURL('image/jpeg', mid);
+        const bytes = dataUrlToBlob(url).size;
+
+        if (bytes <= maxBytes) {
+          bestUrl = url;
+          bestQ   = mid;
+          lo      = mid;                       // try higher quality
+        } else {
+          hi = mid;                            // too large, lower quality
+        }
+      }
+
+      // Edge case: even minimum quality is too large (very detailed image on small canvas)
+      if (!bestUrl) {
+        bestUrl = canvas.toDataURL('image/jpeg', 0.10);
+        bestQ   = 0.10;
+      }
+
+      return { dataUrl: bestUrl, quality: bestQ };
+    }
+
+    function dataUrlToBlob(dataUrl) {
+      const [header, data] = dataUrl.split(',');
+      const mime = header.match(/:(.*?);/)[1];
+      const binary = atob(data);
+      const arr = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) arr[i] = binary.charCodeAt(i);
+      return new Blob([arr], { type: mime });
+    }
+
+    function reset() {
+      output.style.display = 'none';
+      dropZone.style.display = 'block';
+      fileInput.value = '';
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+  </script>
+</body>
+</html>
