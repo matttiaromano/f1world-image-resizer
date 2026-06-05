@@ -156,6 +156,41 @@
     }
 
     canvas { display: none; }
+
+    /* URL input row */
+    .url-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 16px;
+      max-width: 440px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    #url-input {
+      flex: 1;
+      padding: 9px 12px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      color: #1a1a2e;
+      background: #fff;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    #url-input:focus { border-color: #3b82f6; }
+    #url-input::placeholder { color: #aaa; }
+
+    #btn-load-url {
+      padding: 9px 16px;
+      background: #3b82f6;
+      color: #fff;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
   </style>
 </head>
 <body>
@@ -169,8 +204,12 @@
       <polyline points="17 8 12 3 7 8"/>
       <line x1="12" y1="3" x2="12" y2="15"/>
     </svg>
-    <p>Drag &amp; drop a photo here, or <span id="browse-link">browse</span></p>
+    <p>Drag &amp; drop, <span id="browse-link">browse</span>, or paste (Ctrl+V)</p>
     <input type="file" id="file-input" accept="image/*" />
+    <div class="url-row">
+      <input type="url" id="url-input" placeholder="Or paste an image URL…" />
+      <button id="btn-load-url" type="button">Load</button>
+    </div>
   </div>
 
   <p id="loader">Processing…</p>
@@ -350,7 +389,107 @@
       output.style.display = 'none';
       dropZone.style.display = 'block';
       fileInput.value = '';
+      urlInput.value = '';
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+
+    // ── URL input ─────────────────────────────────────────────────────────────
+    const urlInput   = document.getElementById('url-input');
+    const btnLoadUrl = document.getElementById('btn-load-url');
+
+    function loadFromUrl() {
+      const url = urlInput.value.trim();
+      if (url) processUrl(url);
+    }
+
+    urlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') loadFromUrl(); });
+    btnLoadUrl.addEventListener('click', loadFromUrl);
+    urlInput.addEventListener('click', (e) => e.stopPropagation()); // don't open file dialog
+
+    // ── Clipboard paste (Ctrl/Cmd+V) ──────────────────────────────────────────
+    document.addEventListener('paste', (e) => {
+      if (output.style.display !== 'none') return;
+      if (e.target === urlInput) return; // let the URL input handle its own paste normally
+
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      // Prefer raw image data (e.g. screenshot or browser "Copy Image")
+      for (const item of items) {
+        if (item.type.startsWith('image/')) {
+          const file = item.getAsFile();
+          if (file) { processFile(file); return; }
+        }
+      }
+
+      // Fall back to a pasted URL string
+      for (const item of items) {
+        if (item.type === 'text/plain') {
+          item.getAsString((text) => {
+            const trimmed = text.trim();
+            if (/^https?:\/\//.test(trimmed)) processUrl(trimmed);
+          });
+          return;
+        }
+      }
+    });
+
+    // ── Process image from URL ────────────────────────────────────────────────
+    function processUrl(url) {
+      loader.style.display = 'block';
+      dropZone.style.display = 'none';
+
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        document.getElementById('preview-orig').src = url;
+        document.getElementById('meta-orig').textContent =
+          `${img.naturalWidth} × ${img.naturalHeight} px`;
+
+        const scaleX = TARGET_W / img.naturalWidth;
+        const scaleY = TARGET_H / img.naturalHeight;
+        const scale  = Math.max(scaleX, scaleY);
+
+        const scaledW = img.naturalWidth  * scale;
+        const scaledH = img.naturalHeight * scale;
+        const offsetX = (scaledW - TARGET_W) / 2;
+        const offsetY = (scaledH - TARGET_H) / 2;
+
+        canvas.width  = TARGET_W;
+        canvas.height = TARGET_H;
+        ctx.clearRect(0, 0, TARGET_W, TARGET_H);
+        ctx.drawImage(img, -offsetX, -offsetY, scaledW, scaledH);
+
+        const { dataUrl, quality } = compressToTarget(MAX_BYTES);
+        const blob = dataUrlToBlob(dataUrl);
+        const sizeKb = blob.size / 1024;
+
+        document.getElementById('preview-out').src = dataUrl;
+        document.getElementById('meta-out').textContent =
+          `${TARGET_W} × ${TARGET_H} px · ${sizeKb.toFixed(1)} KB`;
+
+        const statKb = document.getElementById('stat-kb');
+        statKb.textContent = `${sizeKb.toFixed(1)} KB`;
+        statKb.className   = sizeKb <= 100 ? 'ok' : 'warn';
+
+        document.getElementById('stat-quality').textContent = `${Math.round(quality * 100)}%`;
+
+        document.getElementById('btn-download').onclick = () => {
+          const a = document.createElement('a');
+          a.href     = dataUrl;
+          a.download = 'photo_850x510.jpg';
+          a.click();
+        };
+
+        loader.style.display = 'none';
+        output.style.display = 'flex';
+      };
+      img.onerror = () => {
+        loader.style.display = 'none';
+        dropZone.style.display = 'block';
+        alert('Could not load the image.\nThe server may block cross-origin requests.');
+      };
+      img.src = url;
     }
   </script>
 </body>
