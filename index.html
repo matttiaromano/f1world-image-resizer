@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Photo Resizer — 850×510 / 100 KB</title>
+  <title>Photo Resizer — 1920×1152 / 1 MB</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -196,7 +196,7 @@
 <body>
 
   <h1>Photo Resizer</h1>
-  <p class="subtitle">850 × 510 px &nbsp;·&nbsp; max 100 KB &nbsp;·&nbsp; smart crop</p>
+  <p class="subtitle">1920 × 1152 px &nbsp;·&nbsp; max 1 MB &nbsp;·&nbsp; smart crop</p>
 
   <div id="drop-zone">
     <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#555" stroke-width="1.5">
@@ -235,7 +235,7 @@
     <div id="stats">
       <div class="stat">
         <label>Dimensions</label>
-        <value id="stat-size">850 × 510 px</value>
+        <value id="stat-size">1920 × 1152 px</value>
       </div>
       <div class="stat">
         <label>File size</label>
@@ -258,9 +258,9 @@
   <footer>Made with ❤️ by <a href="https://matttia.com" target="_blank" rel="noopener noreferrer">Mattia Romano</a></footer>
 
   <script>
-    const TARGET_W = 850;
-    const TARGET_H = 510;
-    const MAX_BYTES = 100 * 1024; // 100 KB
+    const TARGET_W = 1920;
+    const TARGET_H = 1152;
+    const MAX_BYTES = 1000 * 1000; // 1 MB (decimal, so it also fits CMS limits that count 1 MB = 1,000,000 bytes)
 
     const dropZone   = document.getElementById('drop-zone');
     const fileInput  = document.getElementById('file-input');
@@ -305,48 +305,73 @@
       img.onload = () => {
         document.getElementById('meta-orig').textContent =
           `${img.naturalWidth} × ${img.naturalHeight} px · ${(file.size / 1024).toFixed(1)} KB`;
-
-        // Smart crop: scale to cover TARGET_W × TARGET_H, center-crop excess
-        const scaleX = TARGET_W / img.naturalWidth;
-        const scaleY = TARGET_H / img.naturalHeight;
-        const scale  = Math.max(scaleX, scaleY);
-
-        const scaledW = img.naturalWidth  * scale;
-        const scaledH = img.naturalHeight * scale;
-        const offsetX = (scaledW - TARGET_W) / 2;
-        const offsetY = (scaledH - TARGET_H) / 2;
-
-        canvas.width  = TARGET_W;
-        canvas.height = TARGET_H;
-        ctx.clearRect(0, 0, TARGET_W, TARGET_H);
-        ctx.drawImage(img, -offsetX, -offsetY, scaledW, scaledH);
-
-        // Binary search for the highest JPEG quality that keeps size ≤ 100 KB
-        const { dataUrl, quality } = compressToTarget(MAX_BYTES);
-        const blob = dataUrlToBlob(dataUrl);
-        const sizeKb = blob.size / 1024;
-
-        document.getElementById('preview-out').src = dataUrl;
-        document.getElementById('meta-out').textContent =
-          `${TARGET_W} × ${TARGET_H} px · ${sizeKb.toFixed(1)} KB`;
-
-        const statKb = document.getElementById('stat-kb');
-        statKb.textContent = `${sizeKb.toFixed(1)} KB`;
-        statKb.className   = sizeKb <= 100 ? 'ok' : 'warn';
-
-        document.getElementById('stat-quality').textContent = `${Math.round(quality * 100)}%`;
-
-        document.getElementById('btn-download').onclick = () => {
-          const a = document.createElement('a');
-          a.href     = dataUrl;
-          a.download = 'photo_850x510.jpg';
-          a.click();
-        };
-
-        loader.style.display = 'none';
-        output.style.display = 'flex';
+        renderOutput(img);
       };
       img.src = origUrl;
+    }
+
+    // Smart crop + high-quality resize into the main canvas, then compress and show the result
+    function renderOutput(img) {
+      drawResized(img);
+
+      // Binary search for the highest JPEG quality that keeps size ≤ MAX_BYTES
+      const { dataUrl, quality } = compressToTarget(MAX_BYTES);
+      const blob = dataUrlToBlob(dataUrl);
+      const sizeKb = blob.size / 1024;
+
+      document.getElementById('preview-out').src = dataUrl;
+      document.getElementById('meta-out').textContent =
+        `${TARGET_W} × ${TARGET_H} px · ${sizeKb.toFixed(1)} KB`;
+
+      const statKb = document.getElementById('stat-kb');
+      statKb.textContent = `${sizeKb.toFixed(1)} KB`;
+      statKb.className   = blob.size <= MAX_BYTES ? 'ok' : 'warn';
+
+      document.getElementById('stat-quality').textContent = `${Math.round(quality * 100)}%`;
+
+      document.getElementById('btn-download').onclick = () => {
+        const a = document.createElement('a');
+        a.href     = dataUrl;
+        a.download = `photo_${TARGET_W}x${TARGET_H}.jpg`;
+        a.click();
+      };
+
+      loader.style.display = 'none';
+      output.style.display = 'flex';
+    }
+
+    // A single large downscale (e.g. 6000 px → 1920 px) makes the browser sample only a few
+    // source pixels per output pixel, producing aliasing and visible noise. Halving the image
+    // step by step averages every pixel at each stage, like a proper photo editor resample.
+    function drawResized(img) {
+      // Center crop to the target aspect ratio, expressed in source pixels
+      const scale = Math.max(TARGET_W / img.naturalWidth, TARGET_H / img.naturalHeight);
+      let sw = TARGET_W / scale;
+      let sh = TARGET_H / scale;
+      let sx = (img.naturalWidth  - sw) / 2;
+      let sy = (img.naturalHeight - sh) / 2;
+      let source = img;
+
+      while (sw / 2 >= TARGET_W && sh / 2 >= TARGET_H) {
+        const w = Math.round(sw / 2);
+        const h = Math.round(sh / 2);
+        const step = document.createElement('canvas');
+        step.width  = w;
+        step.height = h;
+        const stepCtx = step.getContext('2d');
+        stepCtx.imageSmoothingEnabled = true;
+        stepCtx.imageSmoothingQuality = 'high';
+        stepCtx.drawImage(source, sx, sy, sw, sh, 0, 0, w, h);
+        source = step;
+        sx = 0; sy = 0; sw = w; sh = h;
+      }
+
+      // Setting width/height resets the context state, so configure smoothing afterwards
+      canvas.width  = TARGET_W;
+      canvas.height = TARGET_H;
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(source, sx, sy, sw, sh, 0, 0, TARGET_W, TARGET_H);
     }
 
     // Binary search over JPEG quality [0.1 … 1.0] to maximise quality ≤ maxBytes
@@ -445,44 +470,7 @@
         document.getElementById('preview-orig').src = url;
         document.getElementById('meta-orig').textContent =
           `${img.naturalWidth} × ${img.naturalHeight} px`;
-
-        const scaleX = TARGET_W / img.naturalWidth;
-        const scaleY = TARGET_H / img.naturalHeight;
-        const scale  = Math.max(scaleX, scaleY);
-
-        const scaledW = img.naturalWidth  * scale;
-        const scaledH = img.naturalHeight * scale;
-        const offsetX = (scaledW - TARGET_W) / 2;
-        const offsetY = (scaledH - TARGET_H) / 2;
-
-        canvas.width  = TARGET_W;
-        canvas.height = TARGET_H;
-        ctx.clearRect(0, 0, TARGET_W, TARGET_H);
-        ctx.drawImage(img, -offsetX, -offsetY, scaledW, scaledH);
-
-        const { dataUrl, quality } = compressToTarget(MAX_BYTES);
-        const blob = dataUrlToBlob(dataUrl);
-        const sizeKb = blob.size / 1024;
-
-        document.getElementById('preview-out').src = dataUrl;
-        document.getElementById('meta-out').textContent =
-          `${TARGET_W} × ${TARGET_H} px · ${sizeKb.toFixed(1)} KB`;
-
-        const statKb = document.getElementById('stat-kb');
-        statKb.textContent = `${sizeKb.toFixed(1)} KB`;
-        statKb.className   = sizeKb <= 100 ? 'ok' : 'warn';
-
-        document.getElementById('stat-quality').textContent = `${Math.round(quality * 100)}%`;
-
-        document.getElementById('btn-download').onclick = () => {
-          const a = document.createElement('a');
-          a.href     = dataUrl;
-          a.download = 'photo_850x510.jpg';
-          a.click();
-        };
-
-        loader.style.display = 'none';
-        output.style.display = 'flex';
+        renderOutput(img);
       };
       img.onerror = () => {
         loader.style.display = 'none';
