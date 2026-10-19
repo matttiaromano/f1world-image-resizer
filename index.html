@@ -275,13 +275,19 @@
     browseLink.addEventListener('click', () => fileInput.click());
     dropZone.addEventListener('click', (e) => { if (e.target !== browseLink) fileInput.click(); });
 
-    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
-    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
-    dropZone.addEventListener('drop', (e) => {
+    // The whole page is a drop target: dropping outside the box would otherwise make the
+    // browser navigate away to the dropped image
+    document.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      if (isIdle()) dropZone.classList.add('dragover');
+    });
+    document.addEventListener('dragleave', (e) => {
+      if (!e.relatedTarget) dropZone.classList.remove('dragover'); // left the window
+    });
+    document.addEventListener('drop', (e) => {
       e.preventDefault();
       dropZone.classList.remove('dragover');
-      const file = e.dataTransfer.files[0];
-      if (file && file.type.startsWith('image/')) processFile(file);
+      if (isIdle()) handleTransfer(e.dataTransfer);
     });
 
     fileInput.addEventListener('change', () => {
@@ -429,35 +435,57 @@
 
     urlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') loadFromUrl(); });
     btnLoadUrl.addEventListener('click', loadFromUrl);
-    urlInput.addEventListener('click', (e) => e.stopPropagation()); // don't open file dialog
+    document.querySelector('.url-row').addEventListener('click', (e) => e.stopPropagation()); // don't open file dialog
 
     // ── Clipboard paste (Ctrl/Cmd+V) ──────────────────────────────────────────
     document.addEventListener('paste', (e) => {
-      if (output.style.display !== 'none') return;
-      if (e.target === urlInput) return; // let the URL input handle its own paste normally
-
-      const items = e.clipboardData?.items;
-      if (!items) return;
-
-      // Prefer raw image data (e.g. screenshot or browser "Copy Image")
-      for (const item of items) {
-        if (item.type.startsWith('image/')) {
-          const file = item.getAsFile();
-          if (file) { processFile(file); return; }
-        }
-      }
-
-      // Fall back to a pasted URL string
-      for (const item of items) {
-        if (item.type === 'text/plain') {
-          item.getAsString((text) => {
-            const trimmed = text.trim();
-            if (/^https?:\/\//.test(trimmed)) processUrl(trimmed);
-          });
-          return;
-        }
-      }
+      if (!isIdle() || !e.clipboardData) return;
+      // Inside the URL field, let text paste normally; only intercept actual image data
+      if (e.target === urlInput && !imageFileFrom(e.clipboardData)) return;
+      if (handleTransfer(e.clipboardData)) e.preventDefault();
     });
+
+    // ── Shared drop / paste handling ──────────────────────────────────────────
+
+    function isIdle() {
+      return dropZone.style.display !== 'none';
+    }
+
+    // Handles a DataTransfer from a drop or a paste. Returns true if it contained an image.
+    function handleTransfer(dt) {
+      // Real image data: files from disk, screenshots, browser "Copy image"
+      const file = imageFileFrom(dt);
+      if (file) { processFile(file); return true; }
+
+      // Image dragged from another web page: the browser only hands over its URL.
+      // Prefer the <img src> from the HTML, since the uri-list is often the surrounding link.
+      const url = imageUrlFromHtml(dt.getData('text/html'))
+               || firstUrl(dt.getData('text/uri-list'))
+               || firstUrl(dt.getData('text/plain'));
+      if (url) { processUrl(url); return true; }
+
+      return false;
+    }
+
+    function imageFileFrom(dt) {
+      const file = [...dt.files].find((f) => f.type.startsWith('image/'));
+      if (file) return file;
+      const item = [...dt.items].find((i) => i.kind === 'file' && i.type.startsWith('image/'));
+      return item ? item.getAsFile() : null;
+    }
+
+    function imageUrlFromHtml(html) {
+      if (!html) return null;
+      const img = new DOMParser().parseFromString(html, 'text/html').querySelector('img');
+      return img ? firstUrl(img.getAttribute('src')) : null;
+    }
+
+    function firstUrl(text) {
+      if (!text) return null;
+      return text.split(/\r?\n/)
+        .map((line) => line.trim())
+        .find((line) => /^(https?:\/\/|data:image\/)/i.test(line)) || null;
+    }
 
     // ── Process image from URL ────────────────────────────────────────────────
     function processUrl(url) {
@@ -475,7 +503,9 @@
       img.onerror = () => {
         loader.style.display = 'none';
         dropZone.style.display = 'block';
-        alert('Could not load the image.\nThe server may block cross-origin requests.');
+        alert('Could not load the image: the site it comes from does not allow other pages to read it.\n\n' +
+              'Right-click the image → "Copy image", then press Ctrl+V here.\n' +
+              'Or save it to your computer and drag the file in.');
       };
       img.src = url;
     }
