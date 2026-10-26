@@ -205,7 +205,7 @@
       <line x1="12" y1="3" x2="12" y2="15"/>
     </svg>
     <p>Drag &amp; drop, <span id="browse-link">browse</span>, or paste (Ctrl+V)</p>
-    <input type="file" id="file-input" accept="image/*" />
+    <input type="file" id="file-input" accept="image/*,.webp" />
     <div class="url-row">
       <input type="url" id="url-input" placeholder="Or paste an image URL…" />
       <button id="btn-load-url" type="button">Load</button>
@@ -313,6 +313,12 @@
           `${img.naturalWidth} × ${img.naturalHeight} px · ${(file.size / 1024).toFixed(1)} KB`;
         renderOutput(img);
       };
+      img.onerror = () => {
+        loader.style.display = 'none';
+        dropZone.style.display = 'block';
+        fileInput.value = '';
+        alert('Could not read this file as an image. Supported formats: JPEG, PNG, WebP, GIF, AVIF.');
+      };
       img.src = origUrl;
     }
 
@@ -377,6 +383,9 @@
       canvas.height = TARGET_H;
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
+      // JPEG has no alpha: transparent areas (WebP/PNG) would turn black, so flatten onto white
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, TARGET_W, TARGET_H);
       ctx.drawImage(source, sx, sy, sw, sh, 0, 0, TARGET_W, TARGET_H);
     }
 
@@ -468,10 +477,16 @@
     }
 
     function imageFileFrom(dt) {
-      const file = [...dt.files].find((f) => f.type.startsWith('image/'));
+      const file = [...dt.files].find(isImageFile);
       if (file) return file;
       const item = [...dt.items].find((i) => i.kind === 'file' && i.type.startsWith('image/'));
       return item ? item.getAsFile() : null;
+    }
+
+    // Windows reports an empty MIME type for .webp when no WebP codec is registered,
+    // so fall back to the file extension
+    function isImageFile(f) {
+      return f.type.startsWith('image/') || /\.webp$/i.test(f.name);
     }
 
     function imageUrlFromHtml(html) {
